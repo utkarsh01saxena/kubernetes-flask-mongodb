@@ -32,26 +32,20 @@ The system implements:
 
 ```mermaid
 flowchart LR
-    classDef client fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
-    classDef k8s fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
-    classDef svc fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
-    classDef pod fill:#e8f5e9,stroke:#388e3c,stroke-width:2px;
-    classDef storage fill:#ede7f6,stroke:#512da8,stroke-width:2px;
+    Client(["Client / Browser"]) -->|NodePort :30008| FlaskSvc["flask-service (NodePort :30008)"]
 
-    Client([🌐 Client / Browser]):::client -->|NodePort :30008| FlaskSvc[fa:fa-network-wired flask-service\nNodePort :30008]:::svc
-
-    subgraph K8sCluster [" ☸️ Kubernetes Cluster (Minikube) "]
-        FlaskSvc -->|Load Balances| F1[Flask Pod 1\n200m / 250Mi]:::pod
-        FlaskSvc -->|Load Balances| F2[Flask Pod 2\n200m / 250Mi]:::pod
+    subgraph K8sCluster ["Kubernetes Cluster (Minikube)"]
+        FlaskSvc -->|Load Balances| F1["Flask Pod 1 (200m / 250Mi)"]
+        FlaskSvc -->|Load Balances| F2["Flask Pod 2 (200m / 250Mi)"]
         
-        HPA[📈 Horizontal Pod Autoscaler\nTarget: CPU > 70% | 2-5 Replicas] -.->|Autoscales| F1
+        HPA["Horizontal Pod Autoscaler (HPA)<br/>Target: CPU > 70% - Replicas: 2 to 5"] -.->|Autoscales| F1
         
-        F1 -->|DNS: mongo-service:27017| MongoSvc[fa:fa-lock mongo-service\nClusterIP :27017]:::svc
+        F1 -->|DNS: mongo-service:27017| MongoSvc["mongo-service (ClusterIP :27017)"]
         F2 -->|DNS: mongo-service:27017| MongoSvc
         
-        MongoSvc --> M1[(fa:fa-database MongoDB StatefulSet\nmongodb-0)]:::pod
-        M1 --> PVC[fa:fa-hdd PersistentVolumeClaim\nmongo-pvc]:::storage
-        PVC --> PV[PersistentVolume\nmongo-pv : 2Gi]:::storage
+        MongoSvc --> M1[("MongoDB StatefulSet (mongodb-0)")]
+        M1 --> PVC["PersistentVolumeClaim (mongo-pvc)"]
+        PVC --> PV["PersistentVolume (mongo-pv : 2Gi)"]
     end
 ```
 
