@@ -2,6 +2,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: flask-hpa
+  namespace: flask-mongo-app
   labels:
     app.kubernetes.io/name: flask-app
     app.kubernetes.io/component: backend
@@ -19,22 +20,3 @@ spec:
         target:
           type: Utilization
           averageUtilization: 70
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 0
-      policies:
-        - type: Percent
-          value: 100
-          periodSeconds: 15
-        - type: Pods
-          value: 2
-          periodSeconds: 15
-      selectPolicy: Max
-    scaleDown:
-      stabilizationWindowSeconds: 60
-      policies:
-        - type: Percent
-          value: 50
-          periodSeconds: 30
-      selectPolicy: Min
-

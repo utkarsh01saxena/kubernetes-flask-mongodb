@@ -20,3 +20,8 @@ Thumbs.db
 .idea/
 *.log
 
+# Sensitive Kubernetes Secrets (Never commit secrets to git)
+k8s/01-mongo-secret.yaml
+*secret*.yaml
+!*secret*.yaml.example
+!*secret*.example

@@ -1,21 +1,15 @@
 apiVersion: v1
-kind: Secret
+kind: Namespace
 metadata:
-  name: mongodb-secret
+  name: flask-mongo-app
   labels:
-    app.kubernetes.io/name: mongodb
-    app.kubernetes.io/component: database
-type: Opaque
-data:
-  mongo-root-username: YWRtaW4=
-  mongo-root-password: TW9uZ29TZWN1cmUyMDI2IQ==
-  mongo-db: Zmxhc2tfZGI=
-  mongo-uri: bW9uZ29kYjovL2FkbWluOk1vbmdvU2VjdXJlMjAyNiFAbW9uZ28tc2VydmljZToyNzAxNy9mbGFza19kYj9hdXRoU291cmNlPWFkbWlu
+    app.kubernetes.io/name: flask-mongodb-application
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: mongodb-config
+  namespace: flask-mongo-app
   labels:
     app.kubernetes.io/name: mongodb
     app.kubernetes.io/component: database
@@ -29,6 +23,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: flask-config
+  namespace: flask-mongo-app
   labels:
     app.kubernetes.io/name: flask-app
     app.kubernetes.io/component: backend
@@ -61,6 +56,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: mongo-pvc
+  namespace: flask-mongo-app
   labels:
     app.kubernetes.io/name: mongodb
 spec:
@@ -75,6 +71,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: mongo-service
+  namespace: flask-mongo-app
   labels:
     app.kubernetes.io/name: mongodb
     app.kubernetes.io/component: database
@@ -92,6 +89,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: mongodb
+  namespace: flask-mongo-app
   labels:
     app.kubernetes.io/name: mongodb
     app.kubernetes.io/component: database
@@ -164,6 +162,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: flask-deployment
+  namespace: flask-mongo-app
   labels:
     app.kubernetes.io/name: flask-app
     app.kubernetes.io/component: backend
@@ -260,6 +259,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: flask-service
+  namespace: flask-mongo-app
   labels:
     app.kubernetes.io/name: flask-app
     app.kubernetes.io/component: backend
@@ -278,6 +278,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: flask-hpa
+  namespace: flask-mongo-app
   labels:
     app.kubernetes.io/name: flask-app
     app.kubernetes.io/component: backend

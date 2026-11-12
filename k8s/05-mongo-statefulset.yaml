@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: mongodb
+  namespace: flask-mongo-app
   labels:
     app.kubernetes.io/name: mongodb
     app.kubernetes.io/component: database

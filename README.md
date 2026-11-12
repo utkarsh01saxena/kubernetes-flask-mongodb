@@ -11,7 +11,7 @@ Docker Hub: [`utkarsh01saxena/flask-mongodb-app:latest`](https://hub.docker.com/
 flowchart LR
     Client(["Client / Browser"]) -->|NodePort :30008| FlaskSvc["flask-service (NodePort :30008)"]
 
-    subgraph K8sCluster ["Kubernetes Cluster (Minikube)"]
+    subgraph K8sCluster ["Kubernetes Cluster (Namespace: flask-mongo-app)"]
         FlaskSvc -->|Load Balances| F1["Flask Pod 1 (200m / 250Mi)"]
         FlaskSvc -->|Load Balances| F2["Flask Pod 2 (200m / 250Mi)"]
         
@@ -22,11 +22,13 @@ flowchart LR
         
         MongoSvc --> M1[("MongoDB StatefulSet (mongodb-0)")]
         M1 --> PVC["PersistentVolumeClaim (mongo-pvc)"]
-        PVC --> PV["PersistentVolume (mongo-pv : 2Gi)"]
     end
+    
+    PVC --> PV["PersistentVolume (mongo-pv : 2Gi)<br/>Cluster-Scoped"]
 ```
 
 ### System Components
+* **Dedicated Namespace:** All application workloads, configs, and services reside in the **`flask-mongo-app`** namespace for isolation. The storage PersistentVolume (`mongo-pv`) remains cluster-scoped.
 * **Flask API Layer:** Deployed as a Kubernetes Deployment with a baseline of **2 replicas**, rolling update strategy, and HTTP health probes (`/`).
 * **MongoDB Database Layer:** Deployed as a **StatefulSet** with authentication initialized via container environment variables (`MONGO_INITDB_ROOT_USERNAME` and `MONGO_INITDB_ROOT_PASSWORD`). Mounted to a persistent directory (`/data/db`) through a `2Gi` PersistentVolumeClaim.
 * **Network Isolation:** MongoDB is exposed strictly inside the cluster through a **ClusterIP** service on port `27017`. The Flask application is exposed to the local host via a **NodePort** service on port `30008`.
@@ -72,27 +74,40 @@ minikube addons enable metrics-server
 kubectl get pods -n kube-system -l k8s-app=metrics-server
 ```
 
-### Step 2: Deploy Secrets and ConfigMaps
-Create the sensitive credentials and non-sensitive configurations:
+### Step 2: Create Dedicated Namespace
+Isolate all workloads into the `flask-mongo-app` namespace:
 ```bash
-# Deploy MongoDB credentials (root user, password, URI)
-kubectl apply -f k8s/01-mongo-secret.yaml
-
-# Deploy database and application configurations
-kubectl apply -f k8s/02-mongo-configmap.yaml
-kubectl apply -f k8s/06-flask-configmap.yaml
+kubectl apply -f k8s/00-namespace.yaml
 ```
 
-### Step 3: Deploy Persistent Storage
-Create the PersistentVolume and claim to ensure database persistence:
+### Step 3: Create Kubernetes Secret (Secure & Untracked)
+> [!IMPORTANT]
+> To follow GitOps security standards, secret manifests containing credentials are not tracked in Git (`.gitignore`). Create the Secret using the imperative command below with a fresh, strong password:
+
 ```bash
+kubectl create secret generic mongodb-secret \
+  --namespace=flask-mongo-app \
+  --from-literal=mongo-root-username=admin \
+  --from-literal=mongo-root-password="M0ngo_Secur3_2026!#pAss" \
+  --from-literal=mongo-db=flask_db \
+  --from-literal=mongo-uri="mongodb://admin:M0ngo_Secur3_2026%21%23pAss@mongo-service.flask-mongo-app.svc.cluster.local:27017/flask_db?authSource=admin"
+```
+*(Alternatively, copy `cp k8s/01-mongo-secret.yaml.example k8s/01-mongo-secret.yaml`, fill base64 values, and apply locally).*
+
+### Step 4: Deploy ConfigMaps and Persistent Storage
+```bash
+# Deploy ConfigMaps
+kubectl apply -f k8s/02-mongo-configmap.yaml
+kubectl apply -f k8s/06-flask-configmap.yaml
+
+# Deploy cluster-scoped PersistentVolume and namespaced Claim
 kubectl apply -f k8s/03-mongo-pv-pvc.yaml
 
 # Verify the claim is bound
-kubectl get pvc mongo-pvc
+kubectl get pvc -n flask-mongo-app
 ```
 
-### Step 4: Deploy MongoDB StatefulSet & Service
+### Step 5: Deploy MongoDB StatefulSet & Service
 ```bash
 # Deploy internal ClusterIP service
 kubectl apply -f k8s/04-mongo-service.yaml
@@ -100,11 +115,11 @@ kubectl apply -f k8s/04-mongo-service.yaml
 # Deploy MongoDB StatefulSet
 kubectl apply -f k8s/05-mongo-statefulset.yaml
 
-# Wait for MongoDB to become ready
-kubectl rollout status statefulset/mongodb --timeout=120s
+# Wait for MongoDB pod to become ready
+kubectl rollout status statefulset/mongodb -n flask-mongo-app --timeout=120s
 ```
 
-### Step 5: Deploy Flask Deployment, Service & Autoscaler
+### Step 6: Deploy Flask Deployment, Service & Autoscaler
 ```bash
 # Deploy Flask application (pulls utkarsh01saxena/flask-mongodb-app:latest)
 kubectl apply -f k8s/07-flask-deployment.yaml
@@ -116,14 +131,14 @@ kubectl apply -f k8s/08-flask-service.yaml
 kubectl apply -f k8s/09-flask-hpa.yaml
 
 # Wait for Flask deployment rollout
-kubectl rollout status deployment/flask-deployment --timeout=120s
+kubectl rollout status deployment/flask-deployment -n flask-mongo-app --timeout=120s
 ```
 
-*(Note: You can also deploy all manifests at once using `kubectl apply -f k8s/complete-deployment.yaml`).*
+*(Note: You can also apply all resources in one step using `kubectl apply -f k8s/complete-deployment.yaml` after creating the Secret).*
 
-### Step 6: Verify Deployment Status
+### Step 7: Verify Deployment Status
 ```bash
-kubectl get pods,svc,hpa,pvc
+kubectl get pods,svc,hpa,pvc -n flask-mongo-app
 ```
 Expected output:
 * `flask-deployment-...` pods: `1/1 Running` (2 replicas)
@@ -131,10 +146,10 @@ Expected output:
 * `mongo-pvc`: `Bound`
 * `flask-hpa`: `cpu: 0%/70%` (or actual usage percentage)
 
-### Step 7: Access the Application
-On Minikube with the Docker driver, open the tunnel to reach the NodePort service from your host browser:
+### Step 8: Access the Application
+On Minikube with the Docker driver, open the tunnel to reach the NodePort service:
 ```bash
-minikube service flask-service
+minikube service flask-service -n flask-mongo-app
 ```
 This opens the browser at the assigned localhost proxy URL (e.g., `http://127.0.0.1:<PORT>`).
 
@@ -145,13 +160,13 @@ This opens the browser at the assigned localhost proxy URL (e.g., `http://127.0.
 ### 1. DNS Resolution for Inter-Pod Communication
 * **CoreDNS Engine:** Kubernetes runs internal CoreDNS pods that monitor the API server for changes to Services and Endpoints.
 * **Fully Qualified Domain Name (FQDN):**
-  $$\text{mongo-service}.\text{default}.\text{svc}.\text{cluster}.\text{local}$$
+  $$\text{mongo-service}.\text{flask-mongo-app}.\text{svc}.\text{cluster}.\text{local}$$
 * **Search Path Resolution:** Each pod receives an automatically generated `/etc/resolv.conf`:
   ```text
   nameserver 10.96.0.10
-  search default.svc.cluster.local svc.cluster.local cluster.local
+  search flask-mongo-app.svc.cluster.local svc.cluster.local cluster.local
   ```
-  When Flask connects to `mongo-service:27017`, the resolver appends `default.svc.cluster.local`, and CoreDNS resolves it to the internal virtual ClusterIP (`10.100.x.x`). `kube-proxy` then routes the TCP traffic to the healthy `mongodb-0` pod.
+  When Flask connects to `mongo-service:27017`, the resolver appends `flask-mongo-app.svc.cluster.local`, and CoreDNS resolves it to the internal virtual ClusterIP (`10.100.x.x`). `kube-proxy` then routes the TCP traffic to the healthy `mongodb-0` pod.
 
 ### 2. Resource Requests vs. Limits
 Both Flask and MongoDB pods are configured with the requested resource specifications:
@@ -175,7 +190,7 @@ resources:
 | **Database Workload** | **StatefulSet** | Deployment | Databases require stable persistent storage binding and deterministic pod identity (`mongodb-0`). Deployments treat pods as ephemeral and can corrupt shared volume locks. |
 | **Database Service** | **ClusterIP** | NodePort / LoadBalancer | The database must only be accessible from inside the cluster. ClusterIP prevents external access from the host or internet. |
 | **API Exposure** | **NodePort (:30008)** | LoadBalancer / Ingress | On local Minikube, NodePort allows direct access via `minikube ip:30008` without requiring cloud provider load balancers or ingress DNS controllers. |
-| **Namespace Strategy**| **default namespace** | Dedicated Namespace | All manifests target the default namespace for consistent local evaluation and Minikube service tunneling. In enterprise production, isolating workloads into dedicated namespaces with NetworkPolicies is recommended. |
+| **Namespace Strategy**| **flask-mongo-app** | default namespace | Workloads, configs, and services are logically isolated in the `flask-mongo-app` namespace, adhering to enterprise multi-tenant practices, while storage (PV) remains cluster-scoped. |
 | **Credentials** | **Kubernetes Secrets** | ConfigMap / Plain Env | Passwords should not be committed in plain text to source control. Secrets support base64 encoding and Kubernetes RBAC restriction. |
 | **Autoscaling Metric**| **CPU (70%)** | Memory Utilization | Web request surges cause immediate CPU spikes due to JSON parsing and DB socket I/O. Python memory does not drop immediately due to garbage collection behavior. |
 
@@ -184,12 +199,10 @@ The official MongoDB container image (`mongo:6.0`) uses an entrypoint script (`d
 
 > [!WARNING]
 > **Security Advisory on Kubernetes Secrets:**  
-> The credentials stored in `k8s/01-mongo-secret.yaml` are sample values provided strictly for local Minikube assignment demonstration. Base64 is only an encoding format, NOT encryption.  
-> In a production environment:
-> * Secrets must never be stored in Git. A sanitized template file [`k8s/01-mongo-secret.yaml.example`](k8s/01-mongo-secret.yaml.example) is provided for reference.
-> * Use external secret stores such as **HashiCorp Vault**, **AWS Secrets Manager**, or **SealedSecrets** integrated via the **External Secrets Operator (ESO)**.
-> * Alternatively, generate secrets imperatively without committing files:  
->   `kubectl create secret generic mongodb-secret --from-literal=mongo-root-username=admin --from-literal=mongo-root-password=...`
+> In accordance with GitOps security principles, secret manifests containing active credentials are untracked by `.gitignore` and never committed to source control. Base64 is only an encoding format, NOT encryption.  
+> * A sanitized template [`k8s/01-mongo-secret.yaml.example`](k8s/01-mongo-secret.yaml.example) is committed for reference.
+> * A fresh, strong password (`M0ngo_Secur3_2026!#pAss`) is generated imperatively in Step 3.
+> * In enterprise production, integrate external secret stores such as **HashiCorp Vault**, **AWS Secrets Manager**, or **SealedSecrets** via the **External Secrets Operator (ESO)**.
 
 ---
 
@@ -288,17 +301,17 @@ kubectl run load-gen --image=busybox:1.28 --restart=Never -- /bin/sh -c "while t
 │   ├── .dockerignore              # Docker build exclusions
 │   └── .env.example               # Reference environment variables
 ├── k8s/                           # Kubernetes manifests
-│   ├── 01-mongo-secret.yaml       # Base64 MongoDB credentials (sample)
-│   ├── 01-mongo-secret.yaml.example # Sanitized secret template
+│   ├── 00-namespace.yaml          # Dedicated namespace (flask-mongo-app)
+│   ├── 01-mongo-secret.yaml.example # Sanitized secret template (credentials untracked)
 │   ├── 02-mongo-configmap.yaml    # Database configuration
-│   ├── 03-mongo-pv-pvc.yaml       # Persistent storage (2Gi)
+│   ├── 03-mongo-pv-pvc.yaml       # Persistent storage (PV cluster-scoped, PVC namespaced)
 │   ├── 04-mongo-service.yaml      # ClusterIP service
 │   ├── 05-mongo-statefulset.yaml  # MongoDB StatefulSet
 │   ├── 06-flask-configmap.yaml    # Flask configuration
 │   ├── 07-flask-deployment.yaml   # Flask Deployment (2 replicas)
 │   ├── 08-flask-service.yaml      # NodePort service (:30008)
 │   ├── 09-flask-hpa.yaml          # Horizontal Pod Autoscaler
-│   └── complete-deployment.yaml   # All-in-one manifest
+│   └── complete-deployment.yaml   # All-in-one manifest (namespace + configs + workloads)
 ├── screenshots/                   # Verification screenshots
 │   ├── 01-local-endpoint-tests.png
 │   ├── 02-docker-build-push.png
