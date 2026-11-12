@@ -244,7 +244,7 @@ kubectl run load-gen --image=busybox:1.28 --restart=Never -- /bin/sh -c "while t
 * **Load Absorption (46m - 47m):** Requests distributed across 5 active pods, dropping CPU to **`116%/70%`**, then down below target to **`56%/70%`**.
 * **Graceful Scale-Down (48m):** Once traffic ceased, HPA observed the cooldown stabilization window and scaled pods back to the baseline minimum of **2 replicas** (`0%/70%`).
 
-![HPA Autoscaling](screenshots/05-hpa-autoscaling.png)
+![HPA Autoscaling](screenshots/05-hpa-autoscaling.png?raw=true)
 
 ---
 
