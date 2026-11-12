@@ -1,34 +1,11 @@
-<div align="center">
+# Kubernetes Deployment for Python Flask & Authenticated MongoDB
 
-# 🚀 Cloud-Native Kubernetes Deployment
-### Scalable Python Flask REST API & Authenticated MongoDB StatefulSet
-
-[![Kubernetes](https://img.shields.io/badge/Kubernetes-v1.30+-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)](https://kubernetes.io/)
-[![Docker](https://img.shields.io/badge/Docker-Hub%20Published-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://hub.docker.com/r/utkarsh01saxena/flask-mongodb-app)
-[![Python](https://img.shields.io/badge/Python-3.9-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![Flask](https://img.shields.io/badge/Flask-2.0.2-000000?style=for-the-badge&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
-[![MongoDB](https://img.shields.io/badge/MongoDB-6.0-47A248?style=for-the-badge&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
-
-**DevOps Intern Assessment Submission**  
-**Author:** Utkarsh Saxena | **Docker Hub Image:** [`utkarsh01saxena/flask-mongodb-app:latest`](https://hub.docker.com/r/utkarsh01saxena/flask-mongodb-app)
+**Intern Assignment** | Author: Utkarsh Saxena  
+Docker Hub: [`utkarsh01saxena/flask-mongodb-app:latest`](https://hub.docker.com/r/utkarsh01saxena/flask-mongodb-app)
 
 ---
 
-</div>
-
-## 📌 Executive Summary
-
-This repository contains an end-to-end, production-grade Kubernetes deployment of a containerized **Python Flask API** communicating with a persistent, authenticated **MongoDB database** deployed on **Minikube**. 
-
-The system implements:
-* **High Availability & Autoscaling:** Multi-replica Deployment managed by an HPA v2 (scales from 2 to 5 pods under high CPU load).
-* **Stateful Persistence:** MongoDB StatefulSet with authentication enabled (`--auth`), retaining data across pod restarts via a `2Gi` PersistentVolumeClaim.
-* **Network Isolation:** MongoDB is strictly private to the cluster network via a `ClusterIP` Service; external ingress is limited to the Flask API via a `NodePort` Service.
-* **Security & Least Privilege:** Non-root Docker container (`appuser:10001`) with discrete credentials injected via Kubernetes `Secrets`.
-
----
-
-## 🏗️ System Architecture
+## Architecture Overview
 
 ```mermaid
 flowchart LR
@@ -49,181 +26,275 @@ flowchart LR
     end
 ```
 
+### System Components
+* **Flask API Layer:** Deployed as a Kubernetes Deployment with a baseline of **2 replicas**, rolling update strategy, and HTTP health probes (`/`).
+* **MongoDB Database Layer:** Deployed as a **StatefulSet** with authentication enabled (`--auth`). Mounted to a persistent directory (`/data/db`) through a `2Gi` PersistentVolumeClaim.
+* **Network Isolation:** MongoDB is exposed strictly inside the cluster through a **ClusterIP** service on port `27017`. The Flask application is exposed to the local host via a **NodePort** service on port `30008`.
+* **Autoscaling:** **HPA v2** monitors container CPU utilization and scales Flask pods between **2 and 5 replicas** when utilization exceeds **70%**.
+
 ---
 
-## ⚡ Quickstart (Deploy in 60 Seconds)
+## Building and Pushing the Docker Image
 
-> [!TIP]
-> The container image is pre-published on Docker Hub. Evaluators can deploy the entire stack immediately without building local images.
+The Dockerfile is located at `flask-mongodb-app/Dockerfile`. It uses `python:3.9-slim`, runs as a dedicated unprivileged user (`appuser`, UID `10001`), and leverages layer caching.
 
+### Build and Push Commands
 ```bash
-# Step 1: Start Minikube & enable metrics-server (required for HPA)
-minikube start --driver=docker
-minikube addons enable metrics-server
+# 1. Navigate to the project root
+cd flask-mongodb-app
 
-# Step 2: One-click deploy all Kubernetes resources
-kubectl apply -f k8s/complete-deployment.yaml
+# 2. Build the Docker image
+docker build -t utkarsh01saxena/flask-mongodb-app:latest .
 
-# Step 3: Launch service in your browser
-minikube service flask-service
+# 3. Log in to Docker Hub
+docker login
+
+# 4. Push the image to the public registry
+docker push utkarsh01saxena/flask-mongodb-app:latest
 ```
 
 ---
 
-## 📂 Repository Layout
+## Detailed Minikube Deployment Steps
+
+Follow these steps to deploy and verify the application stack on Minikube:
+
+### Step 1: Start Minikube & Enable Metrics Server
+The Metrics Server is required by the Horizontal Pod Autoscaler to gather CPU metrics:
+```bash
+# Start Minikube with the Docker driver
+minikube start --driver=docker
+
+# Enable the metrics-server addon
+minikube addons enable metrics-server
+
+# Verify metrics-server is running
+kubectl get pods -n kube-system -l k8s-app=metrics-server
+```
+
+### Step 2: Deploy Secrets and ConfigMaps
+Create the sensitive credentials and non-sensitive configurations:
+```bash
+# Deploy MongoDB credentials (root user, password, URI)
+kubectl apply -f k8s/01-mongo-secret.yaml
+
+# Deploy database and application configurations
+kubectl apply -f k8s/02-mongo-configmap.yaml
+kubectl apply -f k8s/06-flask-configmap.yaml
+```
+
+### Step 3: Deploy Persistent Storage
+Create the PersistentVolume and claim to ensure database persistence:
+```bash
+kubectl apply -f k8s/03-mongo-pv-pvc.yaml
+
+# Verify the claim is bound
+kubectl get pvc mongo-pvc
+```
+
+### Step 4: Deploy MongoDB StatefulSet & Service
+```bash
+# Deploy internal ClusterIP service
+kubectl apply -f k8s/04-mongo-service.yaml
+
+# Deploy MongoDB StatefulSet
+kubectl apply -f k8s/05-mongo-statefulset.yaml
+
+# Wait for MongoDB to become ready
+kubectl rollout status statefulset/mongodb --timeout=120s
+```
+
+### Step 5: Deploy Flask Deployment, Service & Autoscaler
+```bash
+# Deploy Flask application (pulls utkarsh01saxena/flask-mongodb-app:latest)
+kubectl apply -f k8s/07-flask-deployment.yaml
+
+# Expose Flask externally via NodePort
+kubectl apply -f k8s/08-flask-service.yaml
+
+# Apply Horizontal Pod Autoscaler
+kubectl apply -f k8s/09-flask-hpa.yaml
+
+# Wait for Flask deployment rollout
+kubectl rollout status deployment/flask-deployment --timeout=120s
+```
+
+*(Note: You can also deploy all manifests at once using `kubectl apply -f k8s/complete-deployment.yaml`).*
+
+### Step 6: Verify Deployment Status
+```bash
+kubectl get pods,svc,hpa,pvc
+```
+Expected output:
+* `flask-deployment-...` pods: `1/1 Running` (2 replicas)
+* `mongodb-0` pod: `1/1 Running`
+* `mongo-pvc`: `Bound`
+* `flask-hpa`: `cpu: 0%/70%` (or actual usage percentage)
+
+### Step 7: Access the Application
+On Minikube with the Docker driver, open the tunnel to reach the NodePort service from your host browser:
+```bash
+minikube service flask-service
+```
+This opens the browser at the assigned localhost proxy URL (e.g., `http://127.0.0.1:<PORT>`).
+
+---
+
+## Technical Explanations
+
+### 1. DNS Resolution for Inter-Pod Communication
+* **CoreDNS Engine:** Kubernetes runs internal CoreDNS pods that monitor the API server for changes to Services and Endpoints.
+* **Fully Qualified Domain Name (FQDN):**
+  $$\text{mongo-service}.\text{default}.\text{svc}.\text{cluster}.\text{local}$$
+* **Search Path Resolution:** Each pod receives an automatically generated `/etc/resolv.conf`:
+  ```text
+  nameserver 10.96.0.10
+  search default.svc.cluster.local svc.cluster.local cluster.local
+  ```
+  When Flask connects to `mongo-service:27017`, the resolver appends `default.svc.cluster.local`, and CoreDNS resolves it to the internal virtual ClusterIP (`10.100.x.x`). `kube-proxy` then routes the TCP traffic to the healthy `mongodb-0` pod.
+
+### 2. Resource Requests vs. Limits
+Both Flask and MongoDB pods are configured with the requested resource specifications:
+```yaml
+resources:
+  requests:
+    cpu: "200m"     # 0.2 CPU cores (Scheduling guarantee)
+    memory: "250Mi" # 250 MB RAM
+  limits:
+    cpu: "500m"     # 0.5 CPU cores (Hard ceiling)
+    memory: "500Mi" # 500 MB RAM
+```
+* **Requests (`kube-scheduler`):** Guaranteed minimum resources needed to schedule a pod on a node. HPA uses the CPU request as the denominator when calculating utilization: `(Actual Usage / 200m) * 100`.
+* **Limits (`Linux cgroups`):** Hard resource ceiling. If a pod attempts to use more than `500m` CPU, the Linux Completely Fair Scheduler (CFS) throttles CPU cycles. If memory exceeds `500Mi`, the kernel terminates the process (`OOMKilled / Exit 137`).
+* **Quality of Service (QoS):** Because requests are lower than limits, Kubernetes assigns these pods **`Burstable`** QoS, allowing them to handle traffic bursts without risking node starvation.
+
+### 3. Design Choices & Alternatives
+
+| Component | Selected Option | Alternative Considered | Reason for Decision |
+|---|---|---|---|
+| **Database Workload** | **StatefulSet** | Deployment | Databases require stable persistent storage binding and deterministic pod identity (`mongodb-0`). Deployments treat pods as ephemeral and can corrupt shared volume locks. |
+| **Database Service** | **ClusterIP** | NodePort / LoadBalancer | The database must only be accessible from inside the cluster. ClusterIP prevents external access from the host or internet. |
+| **API Exposure** | **NodePort (:30008)** | LoadBalancer / Ingress | On local Minikube, NodePort allows direct access via `minikube ip:30008` without requiring cloud provider load balancers or ingress DNS controllers. |
+| **Credentials** | **Kubernetes Secrets** | ConfigMap / Plain Env | Passwords should not be committed in plain text to source control. Secrets support base64 encoding and Kubernetes RBAC restriction. |
+| **Autoscaling Metric**| **CPU (70%)** | Memory Utilization | Web request surges cause immediate CPU spikes due to JSON parsing and DB socket I/O. Python memory does not drop immediately due to garbage collection behavior. |
+
+---
+
+## Cookie Points & Testing Scenarios
+
+### Cookie Point 1: Benefits of Python Virtual Environments
+1. **Dependency Isolation:** Prevents conflicts when different projects require incompatible versions of the same library (e.g., Flask 2.0.2 vs Flask 3.x).
+2. **System OS Protection:** Avoids modifying or breaking system-level Python utilities that rely on default operating system packages.
+3. **Reproducibility:** Ensures consistent and deterministic builds by freezing exact dependencies in `requirements.txt`.
+
+---
+
+### Cookie Point 2: Testing Scenarios & Results
+
+All test scenarios were executed and verified locally. The screenshots are saved in the `screenshots/` directory:
+
+#### 1. Functional Endpoint Tests (`01-local-endpoint-tests.png`)
+Executed `python scripts/test_endpoints.py http://127.0.0.1:58313`:
+* `GET /`: Returned `Welcome to the Flask app! The current time is: ...` (HTTP 200).
+* `POST /data`: Inserted sample JSON document, returned `{"status": "Data inserted"}` (HTTP 201).
+* `GET /data`: Retrieved stored records excluding `_id` (HTTP 200).
+* `GET /health`: Verified MongoDB ping and healthy status (HTTP 200).
+
+![Endpoint Tests](screenshots/01-local-endpoint-tests.png)
+
+#### 2. Docker Image Build & Push (`02-docker-build-push.png`)
+The Flask image was tagged and pushed to Docker Hub:
+* Command: `docker push utkarsh01saxena/flask-mongodb-app:latest`
+* Digest: `sha256:44d82e64b8ae818b9ff361baff45b25e714a94cb4f821ca1a17132cc0415ef14` (Size: 856 bytes manifest).
+
+![Docker Push](screenshots/02-docker-build-push.png)
+
+#### 3. Kubernetes Full Stack State (`03-kubernetes-resources.png`)
+Verified all resources via `kubectl get pods,svc,hpa,pvc`:
+* `flask-deployment-6b49955fd9-kbzmb` and `xz2ms`: `1/1 Running` (2 replicas).
+* `mongodb-0`: `1/1 Running`.
+* `flask-service`: NodePort `10.108.128.67:5000` mapped to `30008`.
+* `mongo-service`: ClusterIP `10.100.201.44:27017`.
+* `mongo-pvc`: `Bound` to `mongo-pv` (2Gi).
+
+![Kubernetes Resources](screenshots/03-kubernetes-resources.png)
+
+#### 4. Database Persistence Verification (`04-persistence-test.png`)
+Tested data survival across pod deletion:
+1. Inserted record via `Invoke-RestMethod`: `{"assignment":"Kubernetes","proof":"Persistence Verified"}` $\rightarrow$ `status: Data inserted`.
+2. Verified data via `curl.exe /data`.
+3. Deleted the database pod: `kubectl delete pod mongodb-0`.
+4. Monitored StatefulSet recreation: new `mongodb-0` pod was running within 11 seconds.
+5. Re-queried `curl.exe /data`: Both the previous and newly inserted documents were returned intact, proving storage persistence via `mongo-pvc`.
+
+![Persistence Test](screenshots/04-persistence-test.png)
+
+#### 5. High-Traffic Load Simulation & Autoscaling Results (`05-hpa-autoscaling.png`)
+To simulate high traffic, a load generator was deployed inside the cluster:
+```bash
+kubectl run load-gen --image=busybox:1.28 --restart=Never -- /bin/sh -c "while true; do wget -q -O- http://flask-service:5000/ > /dev/null; done"
+```
+
+**Measured Autoscaling Metrics:**
+* **Baseline State:** 2 replicas (`kbzmb`, `xz2ms`), CPU utilization reported at **`38%/70%`**.
+* **Traffic Surge:** As concurrent requests hit the service, CPU utilization spiked to **`104%/70%`**, exceeding the 70% threshold.
+* **Scale-Up Event:** HPA triggered scale-up, increasing replicas from 2 to **3 pods** (new pod `flask-deployment-6b49955fd9-qmrfz` created, age 65s).
+* **Load Stabilization:** With 3 pods sharing the request load, CPU utilization settled to **`84%/70%`**.
+* **Scale-Down:** Once the load generator was deleted, HPA cooled down over the stabilization window and returned to the baseline of 2 replicas.
+
+![HPA Autoscaling](screenshots/05-hpa-autoscaling.png)
+
+---
+
+## Issues Encountered & Resolutions
+
+1. **Metrics Server Discovery Delay:**  
+   *Issue:* HPA initially showed `cpu: <unknown>/70%`.  
+   *Fix:* Enabled the metrics addon via `minikube addons enable metrics-server` and confirmed CPU requests were explicitly set in the deployment manifest. Metrics appeared within 60 seconds.
+2. **MongoDB Authentication Scope (`authSource=admin`):**  
+   *Issue:* The root user created via `MONGO_INITDB_ROOT_USERNAME` is stored in the `admin` authentication database. Connecting directly to `flask_db` failed authentication.  
+   *Fix:* Updated the connection logic in `app.py` to append `?authSource=admin` to the URI so authentication validates against the correct administrative database.
+3. **PowerShell Argument Parsing with JSON:**  
+   *Issue:* Windows PowerShell strips inner double quotes when running `curl -d '{"key":"value"}'`, causing a 400 Bad Request error.  
+   *Fix:* Used native PowerShell `Invoke-RestMethod` with `-Body` or `curl.exe` with escaped quotes (`\"key\":\"value\"`).
+
+---
+
+## Project Layout
 
 ```text
-D:\Assignment\
-│
-├── README.md                      # Corporate submission documentation
-├── .gitignore                     # Git exclusion rules (venv, bytecode, logs)
-│
-├── flask-mongodb-app/             # 🐳 Application & Container Layer
-│   ├── app.py                     # Flask REST API with dynamic Mongo Auth
-│   ├── Dockerfile                 # Slim, non-root (appuser:10001), healthcheck
-│   ├── requirements.txt           # Flask==2.0.2, Werkzeug==2.0.3, pymongo==3.12.0
-│   ├── .dockerignore              # Build context exclusion
-│   └── .env.example               # Reference local environment variables
-│
-├── k8s/                           # ☸️ Kubernetes Manifests
-│   ├── 01-mongo-secret.yaml       # Base64 encoded DB credentials & URI
-│   ├── 02-mongo-configmap.yaml    # Database host/port parameters
-│   ├── 03-mongo-pv-pvc.yaml       # 2Gi PersistentVolume & Claim (/data/db)
-│   ├── 04-mongo-service.yaml      # ClusterIP Service (Internal only)
-│   ├── 05-mongo-statefulset.yaml  # MongoDB StatefulSet with auth & volume
-│   ├── 06-flask-configmap.yaml    # Flask runtime configuration
-│   ├── 07-flask-deployment.yaml   # Flask Deployment (2 replicas, resources, probes)
-│   ├── 08-flask-service.yaml      # NodePort Service (Port 30008)
-│   ├── 09-flask-hpa.yaml          # Autoscaler (CPU 70%, 2 to 5 replicas)
-│   └── complete-deployment.yaml   # Single all-in-one manifest
-│
-├── screenshots/                   # 📸 Verification Proofs (Captured Tests)
+.
+├── README.md                      # Project documentation
+├── .gitignore                     # Git exclusion rules
+├── flask-mongodb-app/             # Application source code & Dockerfile
+│   ├── app.py                     # Flask application
+│   ├── Dockerfile                 # Container specification
+│   ├── requirements.txt           # Dependencies
+│   ├── .dockerignore              # Docker build exclusions
+│   └── .env.example               # Reference environment variables
+├── k8s/                           # Kubernetes manifests
+│   ├── 00-namespace.yaml          # Dedicated namespace
+│   ├── 01-mongo-secret.yaml       # Base64 MongoDB credentials
+│   ├── 02-mongo-configmap.yaml    # Database configuration
+│   ├── 03-mongo-pv-pvc.yaml       # Persistent storage (2Gi)
+│   ├── 04-mongo-service.yaml      # ClusterIP service
+│   ├── 05-mongo-statefulset.yaml  # MongoDB StatefulSet
+│   ├── 06-flask-configmap.yaml    # Flask configuration
+│   ├── 07-flask-deployment.yaml   # Flask Deployment (2 replicas)
+│   ├── 08-flask-service.yaml      # NodePort service (:30008)
+│   ├── 09-flask-hpa.yaml          # Horizontal Pod Autoscaler
+│   └── complete-deployment.yaml   # All-in-one manifest
+├── screenshots/                   # Verification screenshots
 │   ├── 01-local-endpoint-tests.png
 │   ├── 02-docker-build-push.png
 │   ├── 03-kubernetes-resources.png
 │   ├── 04-persistence-test.png
 │   └── 05-hpa-autoscaling.png
-│
-├── scripts/                       # 🛠️ Automation & Load Generation
-│   ├── deploy.ps1 / deploy.sh     # Automated deployment pipelines
-│   ├── load_test.ps1 / load_test.sh # Traffic generators for HPA testing
-│   ├── test_endpoints.py          # Python integration test suite
-│   └── cleanup.sh                 # Environment teardown script
-│
-└── tests/                         # 🧪 Unit Testing
-    └── test_app.py                # Flask test cases with unittest mocks
+├── scripts/                       # Deployment and load testing scripts
+│   ├── deploy.ps1 / deploy.sh
+│   ├── load_test.ps1 / load_test.sh
+│   ├── test_endpoints.py
+│   └── cleanup.sh
+└── tests/                         # Unit tests
+    └── test_app.py
 ```
-
----
-
-## 🧠 Core Technical Explanations
-
-### 1. DNS Resolution & Inter-Pod Communication
-* **CoreDNS Engine:** Kubernetes runs internal DNS pods that continuously watch the Kubernetes API for new Services and Endpoints.
-* **Fully Qualified Domain Name (FQDN):**
-  $$\text{mongo-service}.\text{default}.\text{svc}.\text{cluster}.\text{local}$$
-* **Search Path Resolution:** Each pod's `/etc/resolv.conf` contains:
-  `search default.svc.cluster.local svc.cluster.local cluster.local`.  
-  When Flask connects to `mongo-service:27017`, the resolver completes the domain, CoreDNS returns the virtual ClusterIP (`10.106.x.x`), and `kube-proxy` transparently forwards TCP packets to the healthy `mongodb-0` pod.
-
----
-
-### 2. Resource Requests vs. Limits & QoS
-Configured according to assignment specifications:
-$$\text{Requests: } 0.2\text{ CPU (200m), } 250\text{Mi Memory} \quad\mid\quad \text{Limits: } 0.5\text{ CPU (500m), } 500\text{Mi Memory}$$
-
-* **Requests (`kube-scheduler`):** Guaranteed minimum hardware allocation required to schedule a pod onto a worker node. HPA uses CPU requests as the baseline denominator to compute real-time utilization.
-* **Limits (`Linux cgroups`):** Strict resource ceiling. If a pod attempts to use more than `500m` CPU, the Linux CFS quota throttles CPU cycles (slows down gracefully). If it exceeds `500Mi` RAM, the kernel OOM killer immediately terminates the process (`OOMKilled / Exit 137`).
-* **Quality of Service (QoS):** This configuration assigns our pods **`Burstable`** QoS, the industry-standard balance between resource efficiency and burst capacity.
-
----
-
-### 3. Architectural Design Decisions
-
-| Architectural Component | Selected Implementation | Alternative Considered | Engineering Justification |
-|---|---|---|---|
-| **Database Workload** | **StatefulSet** | Deployment | Databases require stable persistent storage binding and deterministic network identity (`mongodb-0`). Deployments treat pods as ephemeral and risk disk corruption under concurrent volume mounts. |
-| **Database Service** | **ClusterIP** | NodePort / LoadBalancer | **Zero-Trust Security:** Databases must never be reachable from outside cluster boundaries. ClusterIP provides private internal IP routable only within the cluster. |
-| **API Exposure** | **NodePort (:30008)** | LoadBalancer / Ingress | In local Minikube, NodePort allows zero-dependency host accessibility via `minikube ip:30008` without requiring external cloud load balancers or ingress DNS controllers. |
-| **Secret Management** | **Kubernetes Secrets** | Plain ConfigMap | Prevents storing sensitive credentials in plain-text version control. Facilitates RBAC encryption and granular service account access control. |
-| **Autoscaling Target** | **CPU Utilization (70%)** | Memory Utilization | Web traffic surges spike CPU usage instantly during request parsing and DB serialization. Memory metrics in Python do not drop immediately due to garbage collection behavior. |
-
----
-
-## 🍪 Cookie Points & Testing Verification
-
-### 🍪 Cookie Point 1: Benefits of Python Virtual Environments
-1. **Dependency Isolation:** Prevents cross-project version collisions (e.g., legacy project requiring Flask 2.0.2 vs modern service requiring Flask 3.x).
-2. **Operating System Protection:** Eliminates the risk of breaking system-level Python utilities by avoiding global `sudo pip install`.
-3. **Deterministic Reproducibility:** Guarantees that production Docker containers reproduce the exact package versions frozen in `requirements.txt`.
-
----
-
-### 🍪 Cookie Point 2: Verification Scenarios & Screenshot Proofs
-
-All test scenarios were executed live and captured in the [`screenshots/`](screenshots/) directory:
-
-#### 1. Functional Endpoint Tests
-* **Script:** [`scripts/test_endpoints.py`](scripts/test_endpoints.py)
-* **Result:** All endpoints passed (`GET /` $\rightarrow$ 200, `POST /data` $\rightarrow$ 201, `GET /data` $\rightarrow$ 200, `GET /health` $\rightarrow$ 200).
-<details>
-<summary><b>🔍 View Screenshot: 01-local-endpoint-tests.png</b></summary>
-
-![Endpoint Tests](screenshots/01-local-endpoint-tests.png)
-</details>
-
----
-
-#### 2. Container Registry Push
-* **Command:** `docker push utkarsh01saxena/flask-mongodb-app:latest`
-* **Result:** Image successfully uploaded and verified on Docker Hub.
-<details>
-<summary><b>🔍 View Screenshot: 02-docker-build-push.png</b></summary>
-
-![Docker Push](screenshots/02-docker-build-push.png)
-</details>
-
----
-
-#### 3. Kubernetes Full Cluster State
-* **Command:** `kubectl get pods,svc,hpa,pvc`
-* **Result:** Both Flask pods `1/1 Running`, `mongodb-0` `1/1 Running`, PVC `Bound`, and HPA actively collecting metrics.
-<details>
-<summary><b>🔍 View Screenshot: 03-kubernetes-resources.png</b></summary>
-
-![Kubernetes Resources](screenshots/03-kubernetes-resources.png)
-</details>
-
----
-
-#### 4. Database Persistence Verification (Fault-Tolerance)
-* **Test Flow:** Inserted test record $\rightarrow$ executed `kubectl delete pod mongodb-0` $\rightarrow$ pod recreated $\rightarrow$ queried `GET /data`.
-* **Result:** Data returned intact, proving persistent storage volume (`/data/db`) survived complete pod deletion.
-<details>
-<summary><b>🔍 View Screenshot: 04-persistence-test.png</b></summary>
-
-![Persistence Test](screenshots/04-persistence-test.png)
-</details>
-
----
-
-#### 5. High-Traffic Simulation & HPA Autoscaling
-* **Load Test:** In-cluster load generator sending concurrent HTTP GET traffic:
-  ```bash
-  kubectl run load-gen --image=busybox:1.28 --restart=Never -- /bin/sh -c "while true; do wget -q -O- http://flask-service:5000/ > /dev/null; done"
-  ```
-* **Result:** CPU surged past the 70% threshold $\rightarrow$ HPA triggered scale-up $\rightarrow$ **Pods scaled from 2 up to 5 replicas**. After traffic stopped, HPA gracefully cooled down back to 2 replicas.
-<details>
-<summary><b>🔍 View Screenshot: 05-hpa-autoscaling.png</b></summary>
-
-![HPA Autoscaling](screenshots/05-hpa-autoscaling.png)
-</details>
-
----
-
-## 🛠️ Production Challenges & Resolutions
-
-> [!NOTE]
-> 1. **Metrics Server Discovery:** HPA initially reported `<unknown>/70%`. Resolved by enabling Minikube's metrics addon (`minikube addons enable metrics-server`) and ensuring container CPU requests were explicitly declared.
-> 2. **MongoDB Auth Database Scope:** Root user created via `MONGO_INITDB_ROOT_USERNAME` resides in the `admin` authentication database. Connecting directly to `flask_db` threw auth failure. Resolved by appending `?authSource=admin` to the MongoDB connection URI.
-> 3. **PowerShell Argument Parsing:** Running `curl -d '{"key":"val"}'` in Windows PowerShell mangles inner double quotes. Resolved by using `curl.exe` with escaped quotes or native `Invoke-RestMethod`.
