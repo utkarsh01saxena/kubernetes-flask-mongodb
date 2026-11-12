@@ -28,7 +28,7 @@ flowchart LR
 
 ### System Components
 * **Flask API Layer:** Deployed as a Kubernetes Deployment with a baseline of **2 replicas**, rolling update strategy, and HTTP health probes (`/`).
-* **MongoDB Database Layer:** Deployed as a **StatefulSet** with authentication enabled (`--auth`). Mounted to a persistent directory (`/data/db`) through a `2Gi` PersistentVolumeClaim.
+* **MongoDB Database Layer:** Deployed as a **StatefulSet** with authentication initialized via container environment variables (`MONGO_INITDB_ROOT_USERNAME` and `MONGO_INITDB_ROOT_PASSWORD`). Mounted to a persistent directory (`/data/db`) through a `2Gi` PersistentVolumeClaim.
 * **Network Isolation:** MongoDB is exposed strictly inside the cluster through a **ClusterIP** service on port `27017`. The Flask application is exposed to the local host via a **NodePort** service on port `30008`.
 * **Autoscaling:** **HPA v2** monitors container CPU utilization and scales Flask pods between **2 and 5 replicas** when utilization exceeds **70%**.
 
@@ -175,8 +175,21 @@ resources:
 | **Database Workload** | **StatefulSet** | Deployment | Databases require stable persistent storage binding and deterministic pod identity (`mongodb-0`). Deployments treat pods as ephemeral and can corrupt shared volume locks. |
 | **Database Service** | **ClusterIP** | NodePort / LoadBalancer | The database must only be accessible from inside the cluster. ClusterIP prevents external access from the host or internet. |
 | **API Exposure** | **NodePort (:30008)** | LoadBalancer / Ingress | On local Minikube, NodePort allows direct access via `minikube ip:30008` without requiring cloud provider load balancers or ingress DNS controllers. |
+| **Namespace Strategy**| **default namespace** | Dedicated Namespace | All manifests target the default namespace for consistent local evaluation and Minikube service tunneling. In enterprise production, isolating workloads into dedicated namespaces with NetworkPolicies is recommended. |
 | **Credentials** | **Kubernetes Secrets** | ConfigMap / Plain Env | Passwords should not be committed in plain text to source control. Secrets support base64 encoding and Kubernetes RBAC restriction. |
 | **Autoscaling Metric**| **CPU (70%)** | Memory Utilization | Web request surges cause immediate CPU spikes due to JSON parsing and DB socket I/O. Python memory does not drop immediately due to garbage collection behavior. |
+
+### 4. MongoDB Authentication Mechanism
+The official MongoDB container image (`mongo:6.0`) uses an entrypoint script (`docker-entrypoint.sh`) that checks for the `MONGO_INITDB_ROOT_USERNAME` and `MONGO_INITDB_ROOT_PASSWORD` environment variables. When detected on first boot, the script automatically bootstraps the administrative root user in the `admin` authentication database and starts the `mongod` daemon with access control enabled internally. No manual `--auth` argument is required in the StatefulSet command/args. The Flask application connects using these credentials and explicitly sets `?authSource=admin` in the connection string to authenticate against the root administrative database.
+
+> [!WARNING]
+> **Security Advisory on Kubernetes Secrets:**  
+> The credentials stored in `k8s/01-mongo-secret.yaml` are sample values provided strictly for local Minikube assignment demonstration. Base64 is only an encoding format, NOT encryption.  
+> In a production environment:
+> * Secrets must never be stored in Git. A sanitized template file [`k8s/01-mongo-secret.yaml.example`](k8s/01-mongo-secret.yaml.example) is provided for reference.
+> * Use external secret stores such as **HashiCorp Vault**, **AWS Secrets Manager**, or **SealedSecrets** integrated via the **External Secrets Operator (ESO)**.
+> * Alternatively, generate secrets imperatively without committing files:  
+>   `kubectl create secret generic mongodb-secret --from-literal=mongo-root-username=admin --from-literal=mongo-root-password=...`
 
 ---
 
@@ -275,8 +288,8 @@ kubectl run load-gen --image=busybox:1.28 --restart=Never -- /bin/sh -c "while t
 │   ├── .dockerignore              # Docker build exclusions
 │   └── .env.example               # Reference environment variables
 ├── k8s/                           # Kubernetes manifests
-│   ├── 00-namespace.yaml          # Dedicated namespace
-│   ├── 01-mongo-secret.yaml       # Base64 MongoDB credentials
+│   ├── 01-mongo-secret.yaml       # Base64 MongoDB credentials (sample)
+│   ├── 01-mongo-secret.yaml.example # Sanitized secret template
 │   ├── 02-mongo-configmap.yaml    # Database configuration
 │   ├── 03-mongo-pv-pvc.yaml       # Persistent storage (2Gi)
 │   ├── 04-mongo-service.yaml      # ClusterIP service
