@@ -235,12 +235,14 @@ To simulate high traffic, a load generator was deployed inside the cluster:
 kubectl run load-gen --image=busybox:1.28 --restart=Never -- /bin/sh -c "while true; do wget -q -O- http://flask-service:5000/ > /dev/null; done"
 ```
 
-**Measured Autoscaling Metrics:**
-* **Baseline State:** 2 replicas (`kbzmb`, `xz2ms`), CPU utilization reported at **`38%/70%`**.
-* **Traffic Surge:** As concurrent requests hit the service, CPU utilization spiked to **`104%/70%`**, exceeding the 70% threshold.
-* **Scale-Up Event:** HPA triggered scale-up, increasing replicas from 2 to **3 pods** (new pod `flask-deployment-6b49955fd9-qmrfz` created, age 65s).
-* **Load Stabilization:** With 3 pods sharing the request load, CPU utilization settled to **`84%/70%`**.
-* **Scale-Down:** Once the load generator was deleted, HPA cooled down over the stabilization window and returned to the baseline of 2 replicas.
+**Measured Autoscaling Lifecycle (Captured via `kubectl get hpa flask-hpa -w`):**
+* **Baseline State (43m):** 2 replicas, CPU utilization at **`0%/70%`**.
+* **Traffic Ramping (44m):** CPU utilization rose to **`45%/70%`**.
+* **Traffic Surge (45m):** CPU utilization surged to **`171%/70%`**, significantly exceeding the 70% threshold.
+* **Scale-Up to 4 Replicas (45m):** HPA immediately triggered scale-up from 2 to **4 replicas**.
+* **Scale-Up to Max 5 Replicas (46m):** High CPU demand (`171%`) persisted, prompting HPA to scale to the configured maximum ceiling of **5 replicas**.
+* **Load Absorption (46m - 47m):** Requests distributed across 5 active pods, dropping CPU to **`116%/70%`**, then down below target to **`56%/70%`**.
+* **Graceful Scale-Down (48m):** Once traffic ceased, HPA observed the cooldown stabilization window and scaled pods back to the baseline minimum of **2 replicas** (`0%/70%`).
 
 ![HPA Autoscaling](screenshots/05-hpa-autoscaling.png)
 
